@@ -7,10 +7,10 @@
 #else
 #include "sensor_config.example.h"
 #endif
-#include "model_infer.h"   // identificação por altura
+#include "model_infer.h"
 
 constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4;
-struct Event { char payload[256]; };
+struct Event { char payload[384]; };   // ← era 256, agora 384
 QueueHandle_t events;
 char eventTopic[96], statusTopic[96], clientId[80];
 uint32_t bootId, sequence = 0;
@@ -147,11 +147,14 @@ void loop() {
                         "\"height_cm\":%.1f,"
                         "\"person\":\"desconhecido\","
                         "\"sensor_height_cm\":%.1f,"
-                        "\"uptime_ms\":%lu,\"duration_ms\":%lu,"
+                        "\"uptime_ms\":%lu,"
+                        "\"duration_ms\":%lu,"
                         "\"estimated\":true}",
                         (unsigned long)bootId, (unsigned long)++sequence,
-                        peak, SENSOR_HEIGHT_CM,
-                        (unsigned long)now, (unsigned long)(now - started));
+                        peak,
+                        SENSOR_HEIGHT_CM,
+                        (unsigned long)now,
+                        (unsigned long)(now - started));
 
                 } else if (p.ambiguo) {
                     // Ambíguo: dois candidatos com probabilidades
@@ -164,3 +167,44 @@ void loop() {
                         "\"person\":\"ambiguo\","
                         "\"candidatos\":["
                         "{\"nome\":\"%s\",\"prob\":%.2f},"
+                        "{\"nome\":\"%s\",\"prob\":%.2f}],"
+                        "\"sensor_height_cm\":%.1f,"
+                        "\"uptime_ms\":%lu,"
+                        "\"duration_ms\":%lu,"
+                        "\"estimated\":true}",
+                        (unsigned long)bootId, (unsigned long)++sequence,
+                        peak,
+                        LABELS[p.idx1], p.prob1,
+                        LABELS[p.idx2], p.prob2,
+                        SENSOR_HEIGHT_CM,
+                        (unsigned long)now,
+                        (unsigned long)(now - started));
+
+                } else {
+                    // Identificado com certeza
+                    Serial.printf("Pessoa: %s (pico %.1f cm)\n", LABELS[p.idx1], peak);
+                    snprintf(event.payload, sizeof(event.payload),
+                        "{\"event_id\":\"%08lx-%lu\","
+                        "\"height_cm\":%.1f,"
+                        "\"person\":\"%s\","
+                        "\"sensor_height_cm\":%.1f,"
+                        "\"uptime_ms\":%lu,"
+                        "\"duration_ms\":%lu,"
+                        "\"estimated\":true}",
+                        (unsigned long)bootId, (unsigned long)++sequence,
+                        peak,
+                        LABELS[p.idx1],
+                        SENSOR_HEIGHT_CM,
+                        (unsigned long)now,
+                        (unsigned long)(now - started));
+                }
+                // ─────────────────────────────────────────────────
+
+                Serial.println(event.payload);
+                if (xQueueSend(events, &event, 0) != pdTRUE)
+                    Serial.println("Fila MQTT cheia: registro descartado.");
+            }
+            active = false; clearSamples = heightSamples = 0; peak = 0;
+        }
+    }
+}
