@@ -3,3 +3,7 @@
 *.code-workspace
 .DS_Store
 Thumbs.db
+
+include/config.h
+include/sensor_config.h
+dashboard/alturas.jsonl
