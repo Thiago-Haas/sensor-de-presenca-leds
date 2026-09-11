@@ -30,7 +30,7 @@ for i in range(1, len(alturas_ord)):
     print(f"  {alturas_ord[i-1][1]} → {alturas_ord[i][1]}: {diff:.1f} cm")
 
 # ── Exporta como lookup table com margem de ±1.5 cm ─────────────
-MARGEM = 1.5   # sensor HC-SR04 tem ~±2 cm; margem conservadora
+MARGEM = 2.5   # sensor HC-SR04 tem ~±2 cm; margem conservadora
 
 with open("include/model.h", "w") as f:
     f.write("#pragma once\n\n")

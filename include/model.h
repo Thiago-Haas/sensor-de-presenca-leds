@@ -1,6 +1,6 @@
 #pragma once
 
-constexpr float MATCH_MARGIN = 1.5f;
+constexpr float MATCH_MARGIN = 2.5f;
 constexpr int   NUM_PESSOAS  = 8;
 
 const char* LABELS[] = {"Thiago_Jacques", "Andre_Herzfeld", "Bruna_Henning", "Thiago_Has", "Eduardo", "Ernani", "Miguel", "Larissa"};
