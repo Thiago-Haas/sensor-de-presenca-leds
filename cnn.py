@@ -10,17 +10,19 @@ pessoas = {
     "Thiago_Has":      203.0,
     "Eduardo":         183.0,
     "Ernani":          180.0,
+    "Miguel":          176.0,
+    "Larissa":         158.0,
 }
 nomes   = list(pessoas.keys())
 alturas = list(pessoas.values())
 
-# ── Gera amostras com ruído realista do sensor ───────────────────
+# ── Gera amostras com ruído reduzido ────────────────────────────
 np.random.seed(42)
 X, y = [], []
 for i, h in enumerate(alturas):
-    samples = np.random.normal(h, 1.0, 300)   # ← ruído ±1 cm
+    samples = np.random.normal(h, 0.5, 500)   # ← ruído ±0.5 cm, 500 amostras
     X.extend(samples)
-    y.extend([i] * 300)
+    y.extend([i] * 500)
 
 X = np.array(X, dtype=np.float32).reshape(-1, 1, 1)
 y = np.array(y, dtype=np.int32)
@@ -29,24 +31,24 @@ y = np.array(y, dtype=np.int32)
 X_mean, X_std = X.mean(), X.std()
 X_norm = (X - X_mean) / X_std
 
-# ── Modelo ───────────────────────────────────────────────────────
+# ── Modelo maior para separar alturas próximas ───────────────────
 model = keras.Sequential([
     keras.layers.Input(shape=(1, 1)),
-    keras.layers.Dense(16, activation='relu'),
+    keras.layers.Dense(32, activation='relu'),   # ← era 16
     keras.layers.Flatten(),
-    keras.layers.Dense(8, activation='relu'),
+    keras.layers.Dense(16, activation='relu'),   # ← era 8
     keras.layers.Dense(len(nomes), activation='softmax'),
 ])
 model.compile(optimizer='adam',
               loss='sparse_categorical_crossentropy',
               metrics=['accuracy'])
-model.fit(X_norm, y, epochs=100, batch_size=32,
+model.fit(X_norm, y, epochs=300, batch_size=32,  # ← era 100 épocas
           validation_split=0.2, verbose=0)
 
 loss, acc = model.evaluate(X_norm, y, verbose=0)
 print(f"Acurácia final: {acc*100:.1f}%")
 
-# ── Exporta pesos com índices sequenciais (0, 1, 2...) ───────────
+# ── Exporta pesos com nomes sem conflito com macros do Arduino ───
 def fmt_array(name, arr):
     flat = arr.flatten().tolist()
     vals = ", ".join(f"{v:.6f}f" for v in flat)
@@ -63,8 +65,8 @@ with open("include/model.h", "w") as f:
     for layer in model.layers:
         weights = layer.get_weights()
         if len(weights) == 2:
-            f.write(fmt_array(f"W{layer_idx}", weights[0]))
-            f.write(fmt_array(f"B{layer_idx}", weights[1]))
+            f.write(fmt_array(f"NN_W{layer_idx}", weights[0]))
+            f.write(fmt_array(f"NN_B{layer_idx}", weights[1]))
             f.write("\n")
             layer_idx += 1
 

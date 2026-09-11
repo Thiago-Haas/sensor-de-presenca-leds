@@ -25,20 +25,20 @@ static void dense(const float* in, int in_n,
 }
 
 // ── Inferência ───────────────────────────────────────────────────
-// Retorna índice da pessoa (0-5) ou -1 se confiança < min_confidence
+// Retorna índice da pessoa (0-7) ou -1 se confiança < min_confidence
 int predict_person(float height_cm, float min_confidence = 0.70f) {
-    float x    = (height_cm - MODEL_MEAN) / MODEL_STD;
-    float h1[16], h2[8], out[6];
+    float x = (height_cm - MODEL_MEAN) / MODEL_STD;
+    float h1[32], h2[16], out[8];               // ← tamanhos atualizados
 
-    dense(&x, 1,  W0, B0, 16, h1); relu(h1, 16);  // Dense(16, relu)
-    dense(h1, 16, W1, B1, 8,  h2); relu(h2, 8);   // Dense(8,  relu)
-    dense(h2, 8,  W2, B2, 6,  out);                // Dense(6,  softmax)
+    dense(&x, 1,  NN_W0, NN_B0, 32, h1); relu(h1, 32);  // Dense(32, relu)
+    dense(h1, 32, NN_W1, NN_B1, 16, h2); relu(h2, 16);  // Dense(16, relu)
+    dense(h2, 16, NN_W2, NN_B2, 8,  out);                // Dense(8,  softmax)
 
     // Softmax
     float sum = 0;
-    for (int i = 0; i < 6; i++) { out[i] = expf(out[i]); sum += out[i]; }
-    for (int i = 0; i < 6; i++) out[i] /= sum;
+    for (int i = 0; i < 8; i++) { out[i] = expf(out[i]); sum += out[i]; }
+    for (int i = 0; i < 8; i++) out[i] /= sum;
 
-    int best = argmax(out, 6);
+    int best = argmax(out, 8);
     return (out[best] >= min_confidence) ? best : -1;
 }
