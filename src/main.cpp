@@ -1,19 +1,41 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <Preferences.h>
+#include "calibration.h"
 #include "wifi_env.h"
 #if __has_include("sensor_config.h")
 #include "sensor_config.h"
 #else
 #include "sensor_config.example.h"
 #endif
+// O modelo usa B0/B1 para pesos; Arduino define macros com os mesmos nomes.
+#pragma push_macro("B0")
+#pragma push_macro("B1")
+#undef B0
+#undef B1
 #include "model_infer.h"   // CNN de identificação por altura
+#pragma pop_macro("B1")
+#pragma pop_macro("B0")
 
-constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4;
+constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4, CALIBRATE_BUTTON = 19;
 struct Event { char payload[256]; };
 struct Heartbeat { uint32_t uptimeMs; bool sensorOk; };
-QueueHandle_t events, heartbeats;
-char eventTopic[96], statusTopic[96], heartbeatTopic[96], clientId[80];
+struct CalibrationState { float distanceCm; bool saved; char state[20]; };
+QueueHandle_t events, heartbeats, calibrationStates;
+float sensorHeightCm = SENSOR_HEIGHT_CM;
+bool calibrationSaved = false;
+CalibrationButton calibrationButton;
+FloorCalibration floorCalibration;
+
+void reportCalibration(const char* state) {
+    CalibrationState snapshot{};
+    snapshot.distanceCm = sensorHeightCm;
+    snapshot.saved = calibrationSaved;
+    snprintf(snapshot.state, sizeof(snapshot.state), "%s", state);
+    xQueueOverwrite(calibrationStates, &snapshot);
+}
+char eventTopic[96], statusTopic[96], heartbeatTopic[96], calibrationTopic[96], clientId[80];
 uint32_t bootId, sequence = 0;
 
 // ── Tarefa de rede ───────────────────────────────────────────────
@@ -23,26 +45,56 @@ void networkTask(void*) {
     mqtt.setServer(MQTT_HOST, MQTT_PORT);
     mqtt.setBufferSize(512);
     mqtt.setSocketTimeout(2);
+    mqtt.setKeepAlive(15);
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    int lastWifiStatus = -1;
     uint32_t wifiRetry = millis() - 15000, mqttRetry = millis() - 5000;
     Event pending{};
     bool hasPending = false;
+    uint32_t lastCalibrationPublish = millis() - 5000;
     for (;;) {
         const uint32_t now = millis();
+        const int wifiStatus = WiFi.status();
+        if (wifiStatus != lastWifiStatus) {
+            lastWifiStatus = wifiStatus;
+            if (wifiStatus == WL_CONNECTED) {
+                Serial.printf("[WiFi] Conectado. IP ESP32: %s; broker: %s:%u\n",
+                              WiFi.localIP().toString().c_str(), MQTT_HOST, MQTT_PORT);
+            } else {
+                Serial.printf("[WiFi] Sem conexao (estado %d).\n", wifiStatus);
+            }
+        }
         if (WIFI_SSID[0] && WiFi.status() != WL_CONNECTED && now - wifiRetry >= 15000) {
             wifiRetry = now;
+            Serial.println("[WiFi] Tentando conectar a rede configurada no .env...");
             WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
         }
         if (WiFi.status() == WL_CONNECTED && MQTT_HOST[0]) {
             if (!mqtt.connected() && now - mqttRetry >= 5000) {
                 mqttRetry = now;
+                Serial.printf("[MQTT] Conectando a %s:%u...\n", MQTT_HOST, MQTT_PORT);
                 if (mqtt.connect(clientId, MQTT_USER, MQTT_PASSWORD,
                                  statusTopic, 1, true, "offline")) {
+                    Serial.println("[MQTT] Conectado ao broker.");
                     mqtt.publish(statusTopic, "online", true);
+                    lastCalibrationPublish = millis() - 5000;
+                } else {
+                    Serial.printf("[MQTT] Falha, estado %d. Confira IP do broker, porta e firewall.\n", mqtt.state());
                 }
             }
             if (mqtt.connected()) {
                 mqtt.loop();
+                CalibrationState calibration{};
+                if (millis() - lastCalibrationPublish >= 1000 &&
+                    xQueuePeek(calibrationStates, &calibration, 0) == pdTRUE) {
+                    char payload[160];
+                    snprintf(payload, sizeof(payload),
+                        "{\"distance_cm\":%.1f,\"saved\":%s,\"state\":\"%s\"}",
+                        calibration.distanceCm, calibration.saved ? "true" : "false", calibration.state);
+                    if (mqtt.publish(calibrationTopic, payload, true))
+                        lastCalibrationPublish = millis();
+                }
                 Heartbeat heartbeat{};
                 if (xQueueReceive(heartbeats, &heartbeat, 0) == pdTRUE &&
                     millis() - heartbeat.uptimeMs < 10000) {
@@ -51,7 +103,8 @@ void networkTask(void*) {
                         "{\"uptime_ms\":%lu,\"sensor_ok\":%s,\"rssi_dbm\":%d}",
                         (unsigned long)heartbeat.uptimeMs,
                         heartbeat.sensorOk ? "true" : "false", WiFi.RSSI());
-                    mqtt.publish(heartbeatTopic, payload, false);
+                    if (mqtt.publish(heartbeatTopic, payload, false))
+                        Serial.println("[MQTT] Sinal de vida enviado.");
                 }
                 if (!hasPending) hasPending = xQueueReceive(events, &pending, 0) == pdTRUE;
                 if (hasPending && mqtt.publish(eventTopic, pending.payload, false)) {
@@ -66,22 +119,38 @@ void networkTask(void*) {
 // ── Setup ────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    Serial.println("Firmware: heartbeat + calibracao D19 + diagnostico de rede.");
+    if (!WIFI_SSID[0]) Serial.println("[WiFi] Falta WIFI_SSID no .env.");
+    if (!MQTT_HOST[0]) Serial.println("[MQTT] Falta MQTT_HOST em sensor_config.h.");
     pinMode(LED, OUTPUT);     digitalWrite(LED, LOW);
     pinMode(TRIGGER, OUTPUT); digitalWrite(TRIGGER, LOW);
     pinMode(ECHO, INPUT);
+    pinMode(CALIBRATE_BUTTON, INPUT_PULLUP);
+    Preferences prefs;
+    if (prefs.begin("floor-cal", true)) {
+        const float saved = prefs.getFloat("height", SENSOR_HEIGHT_CM);
+        if (prefs.isKey("height") && isfinite(saved) && saved > MIN_HEIGHT_CM && saved <= 400) {
+            sensorHeightCm = saved;
+            calibrationSaved = true;
+        }
+        prefs.end();
+    }
     bootId = esp_random();
     snprintf(clientId,    sizeof(clientId),    "%s-%08lx", DEVICE_ID, (unsigned long)bootId);
     snprintf(eventTopic,  sizeof(eventTopic),  "porta/%s/altura", DEVICE_ID);
     snprintf(statusTopic, sizeof(statusTopic), "porta/%s/status", DEVICE_ID);
     snprintf(heartbeatTopic, sizeof(heartbeatTopic), "porta/%s/heartbeat", DEVICE_ID);
+    snprintf(calibrationTopic, sizeof(calibrationTopic), "porta/%s/calibration", DEVICE_ID);
     events = xQueueCreate(20, sizeof(Event));
     heartbeats = xQueueCreate(1, sizeof(Heartbeat));
-    if (!events || !heartbeats || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
+    calibrationStates = xQueueCreate(1, sizeof(CalibrationState));
+    if (calibrationStates) reportCalibration(calibrationSaved ? "saved" : "default");
+    if (!events || !heartbeats || !calibrationStates || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
         Serial.println("Falha ao iniciar MQTT. Reinicie a placa.");
         while (true) delay(1000);
     }
     Serial.println("Sensor D2/D4; LED D18. Altura requer sensor no alto, voltado ao chao.");
-    if (SENSOR_HEIGHT_CM <= MIN_HEIGHT_CM || SENSOR_HEIGHT_CM > 400)
+    if (sensorHeightCm <= MIN_HEIGHT_CM || sensorHeightCm > 400)
         Serial.println("Configure SENSOR_HEIGHT_CM em include/sensor_config.h. Alturas desativadas.");
 }
 
@@ -94,6 +163,14 @@ void loop() {
     static bool active = false, ledOn = false;
 
     uint32_t now = millis();
+    if (calibrationButton.pressed(digitalRead(CALIBRATE_BUTTON) == LOW, now) &&
+        !floorCalibration.active()) {
+        floorCalibration.start(now);
+        active = false; peak = 0; heightSamples = clearSamples = filled = index = 0;
+        ledOn = false; digitalWrite(LED, LOW);
+        reportCalibration("measuring");
+        Serial.println("Calibrando: mantenha a passagem livre.");
+    }
     // Gerado pela tarefa de medicao: travamento do loop interrompe o sinal de vida.
     if (now - lastHeartbeat >= 5000) {
         lastHeartbeat = now;
@@ -113,6 +190,34 @@ void loop() {
     const float         distance = pulse / 58.0f;
     now = millis();
 
+    if (floorCalibration.active()) {
+        const bool valid = pulse != 0 && distance >= 2 && distance <= 400;
+        if (valid) lastValid = now;
+        float candidate = sensorHeightCm;
+        const auto result = floorCalibration.sample(distance, valid, now, MIN_HEIGHT_CM, candidate);
+        if (result == FloorCalibration::Ready) {
+            Preferences prefs;
+            bool stored = false;
+            if (prefs.begin("floor-cal", false)) {
+                stored = prefs.putFloat("height", candidate) == sizeof(float);
+                prefs.end();
+            }
+            if (stored) {
+                sensorHeightCm = candidate;
+                calibrationSaved = true;
+                reportCalibration("saved");
+                Serial.printf("Distancia ao chao calibrada: %.1f cm\n", sensorHeightCm);
+            } else {
+                reportCalibration("save_failed");
+                Serial.println("Falha ao salvar calibracao; valor anterior mantido.");
+            }
+        } else if (result == FloorCalibration::Unstable || result == FloorCalibration::NoEcho) {
+            reportCalibration(result == FloorCalibration::Unstable ? "unstable" : "no_echo");
+            Serial.println("Calibracao rejeitada; valor anterior mantido.");
+        }
+        // Nao classifica passagens durante a calibracao.
+        return;
+    }
     if (!pulse || distance < 2 || distance > 400) {
         filled = index = clearSamples = 0;
         if (active && now - lastValid > 2000) {
@@ -124,7 +229,7 @@ void loop() {
     lastValid = now;
     Serial.printf("Distancia: %.1f cm\n", distance);
 
-    const bool calibrated = SENSOR_HEIGHT_CM > MIN_HEIGHT_CM && SENSOR_HEIGHT_CM <= 400;
+    const bool calibrated = sensorHeightCm > MIN_HEIGHT_CM && sensorHeightCm <= 400;
     if (!calibrated) {
         if (distance <= 80) { lastSeen = now; ledOn = true; digitalWrite(LED, HIGH); }
         return;
@@ -140,7 +245,7 @@ void loop() {
     if (b > c) { float t = b; b = c; c = t; }
     if (a > b) { float t = a; a = b; b = t; }
 
-    const float height = SENSOR_HEIGHT_CM - b;
+    const float height = sensorHeightCm - b;
 
     if (height >= MIN_HEIGHT_CM) {
         lastSeen = now; ledOn = true; digitalWrite(LED, HIGH);
@@ -149,7 +254,7 @@ void loop() {
         ++heightSamples; clearSamples = 0;
 
     } else if (active) {
-        if (fabsf(b - SENSOR_HEIGHT_CM) <= 15) ++clearSamples;
+        if (fabsf(b - sensorHeightCm) <= 15) ++clearSamples;
         else clearSamples = 0;
 
         if (clearSamples >= 4) {
@@ -175,7 +280,7 @@ void loop() {
                     (unsigned long)bootId, (unsigned long)++sequence,
                     peak,
                     person_name,
-                    SENSOR_HEIGHT_CM,
+                    sensorHeightCm,
                     (unsigned long)now,
                     (unsigned long)(now - started));
 
