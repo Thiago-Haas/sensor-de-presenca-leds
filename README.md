@@ -144,14 +144,14 @@ Preencha o Wi-Fi no `.env` e o IP do computador em `MQTT_HOST`; mantenha
 são ignorados pelo Git. Compile e grave pelo PlatformIO.
 
 O Mosquitto precisa aceitar conexões da rede local. Para **esta máquina**, cujo
-IP configurado é `10.120.34.240`, execute uma vez, na raiz do projeto:
+IP configurado é `10.243.75.195`, execute uma vez, na raiz do projeto:
 
 ```sh
 sudo bash dashboard/habilitar-mqtt-lan.sh
 ```
 
-Se já estiver conectado, não precisa repetir. Em outra máquina, ajuste o IP no
-script antes de executar. O protótipo usa MQTT sem senha/TLS em rede confiável.
+Se já estiver conectado, não precisa repetir. O script aceita mudanças de IP da rede; atualize `MQTT_HOST` na ESP32
+quando o endereço do notebook mudar. O protótipo usa MQTT sem senha/TLS em rede confiável.
 
 **Sem dados?** Confira se os nós MQTT estão conectados, se o tópico é
 `porta/porta-01/altura` e se o sensor está apontado para o chão. O monitor serial
@@ -221,3 +221,44 @@ eco válido nos últimos 2 segundos. Eco válido não garante precisão da altur
 
 Grave o firmware atualizado para ativar o check. Até receber o primeiro sinal,
 o painel mostra **Aguardando sinal de vida**, mesmo com MQTT conectado.
+
+## Calibrar com o botão D19
+
+Ligue um botão momentâneo entre **D19 e GND** (pull-up interno, sem aplicar 5 V).
+Com o sensor no alto apontado para baixo e a passagem livre, pressione e solte.
+A ESP32 aguarda 1 segundo e coleta 15 leituras estáveis; mantenha a passagem livre
+por cerca de 3 segundos. Durante esse processo, a detecção de passagens fica pausada.
+
+O painel mostra **Distância sensor → chão**, o valor em cm e o resultado da
+calibração. O valor é salvo na ESP32 e restaurado após reiniciar; substitui os
+216 cm do parâmetro inicial. Para mudar novamente, pressione o botão com o chão livre.
+Se não houver leituras suficientes em 5 segundos, elas variarem mais de 3 cm ou
+falhar a gravação, o valor anterior é mantido. Um objeto parado sob o sensor pode
+ser confundido com o chão: sempre deixe a passagem livre.
+
+O tópico `porta/porta-01/calibration` publica o último valor com retenção MQTT;
+consulte também o check de vida para saber se a placa está respondendo agora.
+Grave o firmware atualizado antes de usar o botão.
+
+Teste da lógica de calibração (no computador com g++):
+
+```sh
+g++ -std=c++11 -Iinclude tests/test_calibration.cpp -o /tmp/test_calibration
+/tmp/test_calibration
+```
+
+## Rede do celular e recalibrações
+
+Notebook e ESP32 devem alcançar o mesmo broker: no firmware, `MQTT_HOST` é o
+IPv4 Wi-Fi do notebook (atualmente `10.243.75.195`), e no Node-RED é `127.0.0.1`.
+Se trocar de rede, confira `hostname -I` e atualize o IP no firmware. O comando
+`sudo bash dashboard/habilitar-mqtt-lan.sh` libera a porta 1883 para a rede local
+sem depender de um IP fixo. Não basta o broker escutar apenas em `127.0.0.1`.
+
+No monitor serial, mensagens `[WiFi]` e `[MQTT]` indicam em qual etapa a conexão
+falhou; “Sinal de vida enviado” confirma o envio pelo firmware.
+
+**Pode recalibrar quantas vezes precisar:** pressione e solte D19, espere cerca
+de 3 segundos com a passagem livre e confira “calibração salva” no dashboard.
+Cada nova calibração válida substitui a anterior. Segurar o botão não repete a
+calibração; toques durante uma calibração em andamento são ignorados.

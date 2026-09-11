@@ -291,5 +291,53 @@
         "status-text"
       ]
     ]
+  },
+  {
+    "id": "calibration-in",
+    "type": "mqtt in",
+    "z": "flow",
+    "name": "Distancia calibrada",
+    "topic": "porta/porta-01/calibration",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "broker",
+    "x": 160,
+    "y": 480,
+    "wires": [
+      [
+        "calibration-format"
+      ]
+    ]
+  },
+  {
+    "id": "calibration-format",
+    "type": "function",
+    "z": "flow",
+    "name": "Mostrar calibracao",
+    "func": "const p = msg.payload;\nif (!p || typeof p !== 'object' || !Number.isFinite(p.distance_cm) ||\n    p.distance_cm < 0 || p.distance_cm > 400 || typeof p.saved !== 'boolean') return null;\nconst labels = {\n    default: 'valor configurado', saved: 'calibração salva', measuring: 'calibrando — deixe a passagem livre',\n    unstable: 'leituras instáveis — valor anterior mantido',\n    no_echo: 'sem leituras suficientes — valor anterior mantido',\n    save_failed: 'erro ao salvar — valor anterior mantido'\n};\nif (!Object.prototype.hasOwnProperty.call(labels, p.state)) return null;\nmsg.payload = p.distance_cm.toFixed(1) + ' cm · ' + labels[p.state];\nreturn msg;",
+    "outputs": 1,
+    "x": 420,
+    "y": 480,
+    "wires": [
+      [
+        "calibration-text"
+      ]
+    ]
+  },
+  {
+    "id": "calibration-text",
+    "type": "ui-text",
+    "z": "flow",
+    "group": "group",
+    "order": 0,
+    "width": "12",
+    "height": "1",
+    "name": "Distancia ao chao",
+    "label": "Distância sensor → chão (último valor informado)",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "x": 690,
+    "y": 480,
+    "wires": []
   }
 ]
