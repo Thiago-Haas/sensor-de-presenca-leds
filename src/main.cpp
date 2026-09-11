@@ -38,6 +38,7 @@ void networkTask(void*) {
     WiFi.setAutoReconnect(true);
     int lastWifiStatus = -1;
     uint32_t wifiRetry = millis() - 15000, mqttRetry = millis() - 5000;
+    uint32_t statusLog = millis() - 10000;
     Event pending{};
     bool hasPending = false;
     uint32_t lastCalibrationPublish = millis() - 5000;
@@ -52,6 +53,17 @@ void networkTask(void*) {
             } else {
                 Serial.printf("[WiFi] Sem conexao (estado %d).\n", wifiStatus);
             }
+        }
+        // Resumo periodico de conectividade, independente de mudanca de estado —
+        // util para acompanhar o monitor serial e saber se ainda esta tudo ok.
+        if (now - statusLog >= 10000) {
+            statusLog = now;
+            Serial.printf("[Status] WiFi:%s%s%s MQTT:%s broker:%s:%u\n",
+                wifiStatus == WL_CONNECTED ? "conectado (IP " : "desconectado (estado ",
+                wifiStatus == WL_CONNECTED ? WiFi.localIP().toString().c_str() : String(wifiStatus).c_str(),
+                ")",
+                mqtt.connected() ? "conectado" : "desconectado",
+                MQTT_HOST, MQTT_PORT);
         }
         if (WIFI_SSID[0] && WiFi.status() != WL_CONNECTED && now - wifiRetry >= 15000) {
             wifiRetry = now;
