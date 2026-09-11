@@ -7,13 +7,12 @@
 #else
 #include "sensor_config.example.h"
 #endif
-#include "model_infer.h"   // CNN de identificação por altura
+#include "model_infer.h"   // identificação por altura
 
 constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4;
 struct Event { char payload[256]; };
-struct Heartbeat { uint32_t uptimeMs; bool sensorOk; };
-QueueHandle_t events, heartbeats;
-char eventTopic[96], statusTopic[96], heartbeatTopic[96], clientId[80];
+QueueHandle_t events;
+char eventTopic[96], statusTopic[96], clientId[80];
 uint32_t bootId, sequence = 0;
 
 // ── Tarefa de rede ───────────────────────────────────────────────
@@ -43,16 +42,6 @@ void networkTask(void*) {
             }
             if (mqtt.connected()) {
                 mqtt.loop();
-                Heartbeat heartbeat{};
-                if (xQueueReceive(heartbeats, &heartbeat, 0) == pdTRUE &&
-                    millis() - heartbeat.uptimeMs < 10000) {
-                    char payload[128];
-                    snprintf(payload, sizeof(payload),
-                        "{\"uptime_ms\":%lu,\"sensor_ok\":%s,\"rssi_dbm\":%d}",
-                        (unsigned long)heartbeat.uptimeMs,
-                        heartbeat.sensorOk ? "true" : "false", WiFi.RSSI());
-                    mqtt.publish(heartbeatTopic, payload, false);
-                }
                 if (!hasPending) hasPending = xQueueReceive(events, &pending, 0) == pdTRUE;
                 if (hasPending && mqtt.publish(eventTopic, pending.payload, false)) {
                     hasPending = false;
@@ -73,10 +62,8 @@ void setup() {
     snprintf(clientId,    sizeof(clientId),    "%s-%08lx", DEVICE_ID, (unsigned long)bootId);
     snprintf(eventTopic,  sizeof(eventTopic),  "porta/%s/altura", DEVICE_ID);
     snprintf(statusTopic, sizeof(statusTopic), "porta/%s/status", DEVICE_ID);
-    snprintf(heartbeatTopic, sizeof(heartbeatTopic), "porta/%s/heartbeat", DEVICE_ID);
     events = xQueueCreate(20, sizeof(Event));
-    heartbeats = xQueueCreate(1, sizeof(Heartbeat));
-    if (!events || !heartbeats || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
+    if (!events || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
         Serial.println("Falha ao iniciar MQTT. Reinicie a placa.");
         while (true) delay(1000);
     }
@@ -87,19 +74,12 @@ void setup() {
 
 // ── Loop principal ───────────────────────────────────────────────
 void loop() {
-    static uint32_t lastHeartbeat = millis() - 5000;
     static uint32_t lastRead = 0, lastSeen = 0, lastValid = 0, started = 0;
     static float window[3] = {}, peak = 0;
     static unsigned filled = 0, index = 0, clearSamples = 0, heightSamples = 0;
     static bool active = false, ledOn = false;
 
     uint32_t now = millis();
-    // Gerado pela tarefa de medicao: travamento do loop interrompe o sinal de vida.
-    if (now - lastHeartbeat >= 5000) {
-        lastHeartbeat = now;
-        Heartbeat heartbeat{now, lastValid != 0 && now - lastValid < 2000};
-        xQueueOverwrite(heartbeats, &heartbeat);
-    }
     if (ledOn && now - lastSeen >= LED_HOLD_MS) {
         ledOn = false; digitalWrite(LED, LOW);
     }
@@ -155,35 +135,32 @@ void loop() {
         if (clearSamples >= 4) {
             if (heightSamples >= 3) {
 
-                // ── Identificação pela CNN ────────────────────────
-                int         person_idx  = predict_person(peak);
-                const char* person_name = (person_idx >= 0)
-                                          ? LABELS[person_idx]
-                                          : "desconhecido";
-                Serial.printf("Pessoa: %s (pico %.1f cm)\n", person_name, peak);
-                // ─────────────────────────────────────────────────
-
+                // ── Identificação ─────────────────────────────────
+                Predicao p = predict_person(peak);
                 Event event{};
-                snprintf(event.payload, sizeof(event.payload),
-                    "{\"event_id\":\"%08lx-%lu\","
-                    "\"height_cm\":%.1f,"
-                    "\"person\":\"%s\","
-                    "\"sensor_height_cm\":%.1f,"
-                    "\"uptime_ms\":%lu,"
-                    "\"duration_ms\":%lu,"
-                    "\"estimated\":true}",
-                    (unsigned long)bootId, (unsigned long)++sequence,
-                    peak,
-                    person_name,
-                    SENSOR_HEIGHT_CM,
-                    (unsigned long)now,
-                    (unsigned long)(now - started));
 
-                Serial.println(event.payload);
-                if (xQueueSend(events, &event, 0) != pdTRUE)
-                    Serial.println("Fila MQTT cheia: registro descartado.");
-            }
-            active = false; clearSamples = heightSamples = 0; peak = 0;
-        }
-    }
-}
+                if (p.idx1 == -1) {
+                    // Totalmente desconhecido
+                    Serial.printf("Pessoa: desconhecido (pico %.1f cm)\n", peak);
+                    snprintf(event.payload, sizeof(event.payload),
+                        "{\"event_id\":\"%08lx-%lu\","
+                        "\"height_cm\":%.1f,"
+                        "\"person\":\"desconhecido\","
+                        "\"sensor_height_cm\":%.1f,"
+                        "\"uptime_ms\":%lu,\"duration_ms\":%lu,"
+                        "\"estimated\":true}",
+                        (unsigned long)bootId, (unsigned long)++sequence,
+                        peak, SENSOR_HEIGHT_CM,
+                        (unsigned long)now, (unsigned long)(now - started));
+
+                } else if (p.ambiguo) {
+                    // Ambíguo: dois candidatos com probabilidades
+                    Serial.printf("Pessoa: ambiguo → %s(%.0f%%) ou %s(%.0f%%) (pico %.1f cm)\n",
+                        LABELS[p.idx1], p.prob1 * 100,
+                        LABELS[p.idx2], p.prob2 * 100, peak);
+                    snprintf(event.payload, sizeof(event.payload),
+                        "{\"event_id\":\"%08lx-%lu\","
+                        "\"height_cm\":%.1f,"
+                        "\"person\":\"ambiguo\","
+                        "\"candidatos\":["
+                        "{\"nome\":\"%s\",\"prob\":%.2f},"
