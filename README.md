@@ -211,3 +211,13 @@ também ignorado pelo Git. Sem `.env`, SSID e senha ficam vazios.
 Valores podem usar aspas simples ou duplas; são literais, sem interpolação.
 Depois de alterar o Wi-Fi, compile e grave novamente. As credenciais são
 incorporadas ao firmware, mas não são adicionadas aos arquivos versionados.
+
+## Check de vida
+
+O painel mostra **Vivo** ao receber `porta/porta-01/heartbeat`, enviado pela
+ESP32 a cada 5 segundos. Após 15 segundos sem sinal, mostra **Sem resposta**;
+o aviso MQTT de desconexão mostra **Offline**. O sinal também informa se houve
+eco válido nos últimos 2 segundos. Eco válido não garante precisão da altura.
+
+Grave o firmware atualizado para ativar o check. Até receber o primeiro sinal,
+o painel mostra **Aguardando sinal de vida**, mesmo com MQTT conectado.

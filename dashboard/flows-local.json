@@ -216,7 +216,7 @@
     "y": 260,
     "wires": [
       [
-        "status-text"
+        "heartbeat-watch"
       ]
     ]
   },
@@ -228,12 +228,68 @@
     "order": 1,
     "width": "12",
     "height": "1",
-    "name": "Conexao",
-    "label": "Conexão MQTT (não indica calibração)",
+    "name": "Sinal de vida",
+    "label": "ESP32 — sinal de vida",
     "format": "{{msg.payload}}",
     "layout": "row-spread",
     "x": 400,
     "y": 260,
     "wires": []
+  },
+  {
+    "id": "heartbeat-in",
+    "type": "mqtt in",
+    "z": "flow",
+    "name": "Heartbeat ESP32",
+    "topic": "porta/porta-01/heartbeat",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker",
+    "x": 140,
+    "y": 340,
+    "wires": [
+      [
+        "heartbeat-watch"
+      ]
+    ]
+  },
+  {
+    "id": "heartbeat-tick",
+    "type": "inject",
+    "z": "flow",
+    "name": "Verificar a cada segundo",
+    "props": [
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "topic": "check",
+    "repeat": "1",
+    "once": true,
+    "onceDelay": "0.5",
+    "x": 150,
+    "y": 400,
+    "wires": [
+      [
+        "heartbeat-watch"
+      ]
+    ]
+  },
+  {
+    "id": "heartbeat-watch",
+    "type": "function",
+    "z": "flow",
+    "name": "Vivo / sem resposta (15 s)",
+    "func": "const now = Date.now();\nlet last = context.get('last') || null;\nlet offline = context.get('offline') || false;\nif (msg.topic === 'porta/porta-01/status' && msg.payload === 'offline') {\n    offline = true;\n    last = null;\n}\nif (msg.topic === 'porta/porta-01/heartbeat' && !msg.retain) {\n    const p = msg.payload;\n    if (p && typeof p === 'object' && Number.isFinite(p.uptime_ms) &&\n        p.uptime_ms >= 0 && typeof p.sensor_ok === 'boolean') {\n        last = {at: now, sensorOk: p.sensor_ok};\n        offline = false;\n    }\n}\ncontext.set('last', last);\ncontext.set('offline', offline);\nif (offline) msg.payload = '🔴 Offline';\nelse if (!last) msg.payload = '⚪ Aguardando sinal de vida';\nelse if (now - last.at >= 15000) msg.payload = '🔴 Sem resposta há ' + Math.floor((now-last.at)/1000) + ' s';\nelse msg.payload = (last.sensorOk ? '🟢 Vivo · sensor com eco' : '🟡 Vivo · sensor sem eco recente') + ' · recebido há ' + Math.floor((now-last.at)/1000) + ' s';\nreturn msg;\n",
+    "initialize": "context.set('last', null); context.set('offline', false);",
+    "outputs": 1,
+    "x": 430,
+    "y": 340,
+    "wires": [
+      [
+        "status-text"
+      ]
+    ]
   }
 ]
