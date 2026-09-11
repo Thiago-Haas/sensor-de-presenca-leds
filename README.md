@@ -22,13 +22,14 @@ podem gerar um único registro. O sensor não distingue pessoas de outros objeto
 Copie `include/sensor_config.example.h` para `include/sensor_config.h` e configure:
 
 - `SENSOR_HEIGHT_CM`: distância real ao chão, inicialmente **216 cm**, editável; zero desativa alturas.
-- `WIFI_SSID` e `WIFI_PASSWORD`: rede Wi-Fi de 2,4 GHz.
+- Wi-Fi: preencha `WIFI_SSID` e `WIFI_PASSWORD` no arquivo `.env` na raiz.
+  Use `.env.example` como modelo; `.env` é ignorado pelo Git.
 - `MQTT_HOST`: IP do computador com o broker, nunca `localhost` na ESP32.
 - `MQTT_PORT`, `MQTT_USER` e `MQTT_PASSWORD`: configuração do broker.
 - `DEVICE_ID`: identificador único com letras, números e hífen; padrão `porta-01`.
 - `MIN_HEIGHT_CM`: limite inferior de detecção, inicialmente 50 cm.
 
-`sensor_config.h` é ignorado pelo Git. Sem ele, compila com altura de 216 cm e rede desativada. Com altura zero,
+`sensor_config.h` é ignorado pelo Git. Sem ele, compila com altura de 216 cm e broker não configurado. Com altura zero,
 o LED mantém o comportamento simples de detectar até 80 cm.
 
 ## Ligações
@@ -103,55 +104,69 @@ O protótipo usa MQTT sem TLS apenas em rede local confiável.
 `received_at` em UTC; registros enviados após reconexão terão horário de
 recebimento posterior à passagem real.
 
-## Dashboard instalado nesta máquina
+## Tutorial rápido: Node-RED e dashboard
 
-Painel: <http://localhost:1880/dashboard/alturas>.
-Editor: <http://localhost:1880> (aba Alturas da porta).
-FlowFuse Dashboard 1.31.0 instalado e fluxo ativado no Node-RED local.
-Broker do Node-RED: `127.0.0.1:1883`. Histórico:
-`/home/haas/.node-red/data/alturas.jsonl`.
-Exportação adaptada: `dashboard/flows-local.json`.
+**Já configurado nesta máquina:** abra o [dashboard de alturas](http://localhost:1880/dashboard/alturas).
+O [editor do Node-RED](http://localhost:1880) permite editar o fluxo.
+Passe sob o sensor e libere a passagem: o registro aparece quando o sensor volta
+a detectar o chão. Estar conectado ao MQTT, sozinho, não gera uma medição.
 
-O teste MQTT → Node-RED → histórico foi concluído; o registro simulado foi removido.
-Para permitir que a ESP32 conecte pela rede, execute uma vez:
+### Instalar em outra máquina (Ubuntu/Debian)
+
+1. Instale o VS Code com PlatformIO IDE e uma versão do Node.js compatível com
+   o [Node-RED](https://nodered.org/docs/getting-started/local).
+2. Instale o broker e o Node-RED:
+
+   ```sh
+   sudo apt update
+   sudo apt install mosquitto mosquitto-clients
+   sudo systemctl enable --now mosquitto
+   sudo npm install -g node-red
+   node-red
+   ```
+
+   Mantenha esse terminal aberto. Nesta máquina, o Node-RED já roda como serviço;
+   não é necessário iniciar outra instância.
+3. Abra <http://localhost:1880>. No menu **Manage palette → Install**, instale
+   `@flowfuse/node-red-dashboard` ([guia oficial](https://dashboard.flowfuse.com/getting-started.html)).
+4. Use **Import → select a file** e selecione `dashboard/flows-local.json`.
+   No nó MQTT, confirme `127.0.0.1`, porta `1883`. No nó de arquivo, ajuste
+   `/home/haas/.node-red/data/alturas.jsonl` para uma pasta gravável do seu usuário.
+   Clique em **Deploy**. Se o fluxo já estiver instalado, não importe novamente.
+5. Abra <http://localhost:1880/dashboard/alturas> para ver conexão, gráfico e histórico.
+
+### Conectar a ESP32
+
+Na primeira configuração, copie `.env.example` para `.env` e
+`include/sensor_config.example.h` para `include/sensor_config.h`.
+Preencha o Wi-Fi no `.env` e o IP do computador em `MQTT_HOST`; mantenha
+`SENSOR_HEIGHT_CM = 216.0f` ou ajuste à instalação. Ambos os arquivos locais
+são ignorados pelo Git. Compile e grave pelo PlatformIO.
+
+O Mosquitto precisa aceitar conexões da rede local. Para **esta máquina**, cujo
+IP configurado é `10.120.34.240`, execute uma vez, na raiz do projeto:
 
 ```sh
-sudo bash /home/haas/Documents/GitHub/sensor-de-presenca-leds/dashboard/habilitar-mqtt-lan.sh
+sudo bash dashboard/habilitar-mqtt-lan.sh
 ```
 
-Esse comando configura o Mosquitto no endereço local `10.120.34.240:1883`,
-mantém localhost e reinicia o serviço. Usa acesso sem senha na rede de protótipo.
-Se o IP da máquina mudar, atualize a configuração do Mosquitto e a ESP32.
-O arquivo ignorado `include/sensor_config.h` foi criado com esse IP e 216 cm;
-preencha Wi-Fi e grave o firmware para receber medições reais.
+Se já estiver conectado, não precisa repetir. Em outra máquina, ajuste o IP no
+script antes de executar. O protótipo usa MQTT sem senha/TLS em rede confiável.
 
-## Dashboard local: Mosquitto + Node-RED
-
-Com Docker Engine e Compose instalados no computador, execute:
+**Sem dados?** Confira se os nós MQTT estão conectados, se o tópico é
+`porta/porta-01/altura` e se o sensor está apontado para o chão. O monitor serial
+mostra o JSON ao concluir uma passagem válida. Para acompanhar o broker:
 
 ```sh
-cd dashboard
-docker compose up -d --build
+mosquitto_sub -h localhost -t 'porta/porta-01/#' -v
 ```
 
-Abra <http://localhost:1880/dashboard/alturas>. O painel mostra conexão, gráfico
-e as últimas 100 alturas recebidas. O histórico completo é acrescentado ao
-arquivo `/data/alturas.jsonl` no volume persistente do Node-RED. Para exportar:
+O histórico fica em `/home/haas/.node-red/data/alturas.jsonl`. Gráfico e tabela
+reiniciam com o Node-RED; o arquivo permanece, mas não é recarregado no painel.
+Os horários mostrados são de recebimento no computador.
 
-```sh
-docker compose cp nodered:/data/alturas.jsonl ./alturas.jsonl
-```
-
-Gráfico e tabela usam memória e são reiniciados junto com o Node-RED; o arquivo
-permanece no volume, mas não é recarregado automaticamente no painel.
-Não use `docker compose down -v` se quiser preservar os registros.
-
-O editor e o painel ficam acessíveis apenas no próprio computador. O broker
-escuta na porta 1883 da rede local, sem senha, para o protótipo. Não exponha
-essa porta à internet. Para usar um broker existente, configure as credenciais
-na ESP32 e no nó MQTT do Node-RED. O fluxo usa `porta-01`; ajuste os dois tópicos
-se alterar `DEVICE_ID`. Também é possível importar `dashboard/flows.json` em
-Node-RED existente com `@flowfuse/node-red-dashboard` instalado.
+Alternativa com Docker: use `docker compose up -d --build` dentro de `dashboard/`,
+em uma máquina sem os serviços locais ocupando as portas 1880 e 1883.
 
 ## Validação na bancada
 
@@ -162,8 +177,8 @@ Node-RED existente com `@flowfuse/node-red-dashboard` instalado.
 5. Desconecte a rede e confira a continuidade do LED; reconecte e verifique a fila.
 6. Confira o dashboard e exporte o JSONL para verificar os registros.
 
-O projeto foi preparado sem gravar a placa. O funcionamento físico e o dashboard
-em execução precisam ser validados na instalação real.
+A compilação e o envio MQTT ao histórico foram verificados. Confira a precisão
+das alturas na instalação real com uma medida de referência.
 
 ## Git e GitHub
 
@@ -188,3 +203,11 @@ Substitua `SEU_USUARIO` pelo login do GitHub. A publicação requer autenticaç�
 - [PubSubClient](https://pubsubclient.knolleary.net/api)
 - [FlowFuse Dashboard](https://dashboard.flowfuse.com/getting-started)
 - [Node-RED com Docker](https://nodered.org/docs/getting-started/docker)
+
+## Wi-Fi em .env
+
+O PlatformIO lê `.env` antes de compilar e gera um cabeçalho em `.pio/`,
+também ignorado pelo Git. Sem `.env`, SSID e senha ficam vazios.
+Valores podem usar aspas simples ou duplas; são literais, sem interpolação.
+Depois de alterar o Wi-Fi, compile e grave novamente. As credenciais são
+incorporadas ao firmware, mas não são adicionadas aos arquivos versionados.

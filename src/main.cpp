@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include "wifi_env.h"
 #if __has_include("sensor_config.h")
 #include "sensor_config.h"
 #else

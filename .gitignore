@@ -7,3 +7,7 @@ Thumbs.db
 include/config.h
 include/sensor_config.h
 dashboard/alturas.jsonl
+
+.env
+.env.*
+!.env.example

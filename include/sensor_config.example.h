@@ -1,7 +1,5 @@
 #pragma once
 // Copie para sensor_config.h (ignorado pelo Git). Nao publique senhas.
-constexpr char WIFI_SSID[] = "";
-constexpr char WIFI_PASSWORD[] = "";
 constexpr char MQTT_HOST[] = ""; // IP do computador na rede, nao localhost
 constexpr unsigned short MQTT_PORT = 1883;
 constexpr char MQTT_USER[] = "";
