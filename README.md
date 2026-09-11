@@ -226,8 +226,9 @@ o painel mostra **Aguardando sinal de vida**, mesmo com MQTT conectado.
 
 Ligue um botão momentâneo entre **D19 e GND** (pull-up interno, sem aplicar 5 V).
 Com o sensor no alto apontado para baixo e a passagem livre, pressione e solte.
-A ESP32 aguarda 1 segundo e coleta 15 leituras estáveis; mantenha a passagem livre
-por cerca de 3 segundos. Durante esse processo, a detecção de passagens fica pausada.
+A ESP32 começa a coletar 15 leituras estáveis assim que o botão é pressionado —
+a altura calibrada corresponde a esse instante; mantenha a passagem livre por
+cerca de 3 segundos. Durante esse processo, a detecção de passagens fica pausada.
 
 O painel mostra **Distância sensor → chão**, o valor em cm e o resultado da
 calibração. O valor é salvo na ESP32 e restaurado após reiniciar; substitui os

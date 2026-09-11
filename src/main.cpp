@@ -9,25 +9,10 @@
 #else
 #include "sensor_config.example.h"
 #endif
-<<<<<<< HEAD
-#include "model_infer.h"
-
-constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4;
-struct Event { char payload[384]; };   // ← era 256, agora 384
-QueueHandle_t events;
-char eventTopic[96], statusTopic[96], clientId[80];
-=======
-// O modelo usa B0/B1 para pesos; Arduino define macros com os mesmos nomes.
-#pragma push_macro("B0")
-#pragma push_macro("B1")
-#undef B0
-#undef B1
-#include "model_infer.h"   // CNN de identificação por altura
-#pragma pop_macro("B1")
-#pragma pop_macro("B0")
+#include "model_infer.h"   // Identificacao por altura (vizinho mais proximo)
 
 constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4, CALIBRATE_BUTTON = 19;
-struct Event { char payload[256]; };
+struct Event { char payload[384]; };   // suporta o payload de pessoa ambigua (dois candidatos)
 struct Heartbeat { uint32_t uptimeMs; bool sensorOk; };
 struct CalibrationState { float distanceCm; bool saved; char state[20]; };
 QueueHandle_t events, heartbeats, calibrationStates;
@@ -44,7 +29,6 @@ void reportCalibration(const char* state) {
     xQueueOverwrite(calibrationStates, &snapshot);
 }
 char eventTopic[96], statusTopic[96], heartbeatTopic[96], calibrationTopic[96], clientId[80];
->>>>>>> db68c24aa02294dd2746392f392721097db62739
 uint32_t bootId, sequence = 0;
 
 // ── Tarefa de rede ───────────────────────────────────────────────
@@ -94,8 +78,6 @@ void networkTask(void*) {
             }
             if (mqtt.connected()) {
                 mqtt.loop();
-<<<<<<< HEAD
-=======
                 CalibrationState calibration{};
                 if (millis() - lastCalibrationPublish >= 1000 &&
                     xQueuePeek(calibrationStates, &calibration, 0) == pdTRUE) {
@@ -117,7 +99,6 @@ void networkTask(void*) {
                     if (mqtt.publish(heartbeatTopic, payload, false))
                         Serial.println("[MQTT] Sinal de vida enviado.");
                 }
->>>>>>> db68c24aa02294dd2746392f392721097db62739
                 if (!hasPending) hasPending = xQueueReceive(events, &pending, 0) == pdTRUE;
                 if (hasPending && mqtt.publish(eventTopic, pending.payload, false)) {
                     hasPending = false;
@@ -131,7 +112,7 @@ void networkTask(void*) {
 // ── Setup ────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    Serial.println("Firmware: heartbeat + calibracao D19 + diagnostico de rede.");
+    Serial.println("Firmware: heartbeat + calibracao D19 + identificacao por altura + diagnostico de rede.");
     if (!WIFI_SSID[0]) Serial.println("[WiFi] Falta WIFI_SSID no .env.");
     if (!MQTT_HOST[0]) Serial.println("[MQTT] Falta MQTT_HOST em sensor_config.h.");
     pinMode(LED, OUTPUT);     digitalWrite(LED, LOW);
@@ -151,10 +132,6 @@ void setup() {
     snprintf(clientId,    sizeof(clientId),    "%s-%08lx", DEVICE_ID, (unsigned long)bootId);
     snprintf(eventTopic,  sizeof(eventTopic),  "porta/%s/altura", DEVICE_ID);
     snprintf(statusTopic, sizeof(statusTopic), "porta/%s/status", DEVICE_ID);
-<<<<<<< HEAD
-    events = xQueueCreate(20, sizeof(Event));
-    if (!events || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
-=======
     snprintf(heartbeatTopic, sizeof(heartbeatTopic), "porta/%s/heartbeat", DEVICE_ID);
     snprintf(calibrationTopic, sizeof(calibrationTopic), "porta/%s/calibration", DEVICE_ID);
     events = xQueueCreate(20, sizeof(Event));
@@ -162,7 +139,6 @@ void setup() {
     calibrationStates = xQueueCreate(1, sizeof(CalibrationState));
     if (calibrationStates) reportCalibration(calibrationSaved ? "saved" : "default");
     if (!events || !heartbeats || !calibrationStates || xTaskCreate(networkTask, "mqtt", 6144, nullptr, 1, nullptr) != pdPASS) {
->>>>>>> db68c24aa02294dd2746392f392721097db62739
         Serial.println("Falha ao iniciar MQTT. Reinicie a placa.");
         while (true) delay(1000);
     }
@@ -173,14 +149,13 @@ void setup() {
 
 // ── Loop principal ───────────────────────────────────────────────
 void loop() {
+    static uint32_t lastHeartbeat = millis() - 5000;
     static uint32_t lastRead = 0, lastSeen = 0, lastValid = 0, started = 0;
     static float window[3] = {}, peak = 0;
     static unsigned filled = 0, index = 0, clearSamples = 0, heightSamples = 0;
     static bool active = false, ledOn = false;
 
     uint32_t now = millis();
-<<<<<<< HEAD
-=======
     if (calibrationButton.pressed(digitalRead(CALIBRATE_BUTTON) == LOW, now) &&
         !floorCalibration.active()) {
         floorCalibration.start(now);
@@ -195,7 +170,6 @@ void loop() {
         Heartbeat heartbeat{now, lastValid != 0 && now - lastValid < 2000};
         xQueueOverwrite(heartbeats, &heartbeat);
     }
->>>>>>> db68c24aa02294dd2746392f392721097db62739
     if (ledOn && now - lastSeen >= LED_HOLD_MS) {
         ledOn = false; digitalWrite(LED, LOW);
     }
@@ -279,10 +253,9 @@ void loop() {
         if (clearSamples >= 4) {
             if (heightSamples >= 3) {
 
-                // ── Identificação ─────────────────────────────────
+                // ── Identificação por altura ──────────────────────
                 Predicao p = predict_person(peak);
                 Event event{};
-<<<<<<< HEAD
 
                 if (p.idx1 == -1) {
                     // Totalmente desconhecido
@@ -297,13 +270,13 @@ void loop() {
                         "\"estimated\":true}",
                         (unsigned long)bootId, (unsigned long)++sequence,
                         peak,
-                        SENSOR_HEIGHT_CM,
+                        sensorHeightCm,
                         (unsigned long)now,
                         (unsigned long)(now - started));
 
                 } else if (p.ambiguo) {
                     // Ambíguo: dois candidatos com probabilidades
-                    Serial.printf("Pessoa: ambiguo → %s(%.0f%%) ou %s(%.0f%%) (pico %.1f cm)\n",
+                    Serial.printf("Pessoa: ambiguo -> %s(%.0f%%) ou %s(%.0f%%) (pico %.1f cm)\n",
                         LABELS[p.idx1], p.prob1 * 100,
                         LABELS[p.idx2], p.prob2 * 100, peak);
                     snprintf(event.payload, sizeof(event.payload),
@@ -321,7 +294,7 @@ void loop() {
                         peak,
                         LABELS[p.idx1], p.prob1,
                         LABELS[p.idx2], p.prob2,
-                        SENSOR_HEIGHT_CM,
+                        sensorHeightCm,
                         (unsigned long)now,
                         (unsigned long)(now - started));
 
@@ -339,27 +312,11 @@ void loop() {
                         (unsigned long)bootId, (unsigned long)++sequence,
                         peak,
                         LABELS[p.idx1],
-                        SENSOR_HEIGHT_CM,
+                        sensorHeightCm,
                         (unsigned long)now,
                         (unsigned long)(now - started));
                 }
                 // ─────────────────────────────────────────────────
-=======
-                snprintf(event.payload, sizeof(event.payload),
-                    "{\"event_id\":\"%08lx-%lu\","
-                    "\"height_cm\":%.1f,"
-                    "\"person\":\"%s\","
-                    "\"sensor_height_cm\":%.1f,"
-                    "\"uptime_ms\":%lu,"
-                    "\"duration_ms\":%lu,"
-                    "\"estimated\":true}",
-                    (unsigned long)bootId, (unsigned long)++sequence,
-                    peak,
-                    person_name,
-                    sensorHeightCm,
-                    (unsigned long)now,
-                    (unsigned long)(now - started));
->>>>>>> db68c24aa02294dd2746392f392721097db62739
 
                 Serial.println(event.payload);
                 if (xQueueSend(events, &event, 0) != pdTRUE)

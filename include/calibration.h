@@ -29,7 +29,8 @@ public:
     Result sample(float distance, bool valid, uint32_t now, float minimum, float& value) {
         if (!active_) return Pending;
         if (uint32_t(now - started_) >= 5000) { active_ = false; return NoEcho; }
-        if (uint32_t(now - started_) < 1000) return Pending;
+        // A coleta comeca no instante do aperto do botao, sem espera inicial:
+        // a altura calibrada corresponde ao momento em que o botao foi pressionado.
         if (!valid || !std::isfinite(distance) || distance <= minimum || distance > 400) {
             count_ = 0;
             return Pending;
