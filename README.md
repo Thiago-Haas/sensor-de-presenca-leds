@@ -103,6 +103,28 @@ O protótipo usa MQTT sem TLS apenas em rede local confiável.
 `received_at` em UTC; registros enviados após reconexão terão horário de
 recebimento posterior à passagem real.
 
+## Dashboard instalado nesta máquina
+
+Painel: <http://localhost:1880/dashboard/alturas>.
+Editor: <http://localhost:1880> (aba Alturas da porta).
+FlowFuse Dashboard 1.31.0 instalado e fluxo ativado no Node-RED local.
+Broker do Node-RED: `127.0.0.1:1883`. Histórico:
+`/home/haas/.node-red/data/alturas.jsonl`.
+Exportação adaptada: `dashboard/flows-local.json`.
+
+O teste MQTT → Node-RED → histórico foi concluído; o registro simulado foi removido.
+Para permitir que a ESP32 conecte pela rede, execute uma vez:
+
+```sh
+sudo bash /home/haas/Documents/GitHub/sensor-de-presenca-leds/dashboard/habilitar-mqtt-lan.sh
+```
+
+Esse comando configura o Mosquitto no endereço local `10.120.34.240:1883`,
+mantém localhost e reinicia o serviço. Usa acesso sem senha na rede de protótipo.
+Se o IP da máquina mudar, atualize a configuração do Mosquitto e a ESP32.
+O arquivo ignorado `include/sensor_config.h` foi criado com esse IP e 216 cm;
+preencha Wi-Fi e grave o firmware para receber medições reais.
+
 ## Dashboard local: Mosquitto + Node-RED
 
 Com Docker Engine e Compose instalados no computador, execute:

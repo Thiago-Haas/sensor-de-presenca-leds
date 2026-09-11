@@ -1,0 +1,239 @@
+[
+  {
+    "id": "flow",
+    "type": "tab",
+    "label": "Alturas da porta"
+  },
+  {
+    "id": "broker",
+    "type": "mqtt-broker",
+    "name": "Mosquitto nesta maquina",
+    "broker": "127.0.0.1",
+    "port": "1883",
+    "clientid": "dashboard-alturas",
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "base",
+    "type": "ui-base",
+    "name": "Alturas",
+    "path": "/dashboard",
+    "includeClientData": true,
+    "acceptsClientConfig": [
+      "ui-notification",
+      "ui-control"
+    ],
+    "showPathInSidebar": false,
+    "navigationStyle": "default"
+  },
+  {
+    "id": "theme",
+    "type": "ui-theme",
+    "name": "Tema",
+    "colors": {
+      "surface": "#ffffff",
+      "primary": "#2563eb",
+      "bgPage": "#f1f5f9",
+      "groupBg": "#ffffff",
+      "groupOutline": "#cbd5e1"
+    },
+    "sizes": {
+      "density": "default",
+      "pagePadding": "12px",
+      "groupGap": "12px",
+      "groupBorderRadius": "8px",
+      "widgetGap": "12px"
+    }
+  },
+  {
+    "id": "page",
+    "type": "ui-page",
+    "name": "Alturas estimadas",
+    "ui": "base",
+    "path": "/alturas",
+    "icon": "human-male-height",
+    "layout": "grid",
+    "theme": "theme",
+    "order": 1,
+    "className": "",
+    "visible": true,
+    "disabled": false,
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": "0",
+        "cols": "3"
+      },
+      {
+        "name": "Tablet",
+        "px": "576",
+        "cols": "6"
+      },
+      {
+        "name": "Desktop",
+        "px": "1024",
+        "cols": "12"
+      }
+    ]
+  },
+  {
+    "id": "group",
+    "type": "ui-group",
+    "name": "Passagens — estimativas em cm",
+    "page": "page",
+    "width": "12",
+    "height": "1",
+    "order": 1,
+    "showTitle": true,
+    "visible": true,
+    "disabled": false,
+    "groupType": "default"
+  },
+  {
+    "id": "input",
+    "type": "mqtt in",
+    "z": "flow",
+    "name": "Alturas",
+    "topic": "porta/porta-01/altura",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "broker",
+    "x": 100,
+    "y": 100,
+    "wires": [
+      [
+        "validate"
+      ]
+    ]
+  },
+  {
+    "id": "validate",
+    "type": "function",
+    "z": "flow",
+    "name": "Validar e registrar recebimento",
+    "func": "const p = msg.payload;\nif (!p || typeof p !== 'object' || typeof p.height_cm !== 'number' ||\n    !Number.isFinite(p.height_cm) || !Number.isFinite(p.sensor_height_cm) ||\n    p.height_cm < 0 || p.height_cm >= p.sensor_height_cm ||\n    p.sensor_height_cm > 400 || typeof p.event_id !== 'string' || p.estimated !== true) {\n    node.warn('Registro de altura invalido'); return null;\n}\nlet seen = context.get('seen') || [];\nif (seen.includes(p.event_id)) return null;\nseen.push(p.event_id); context.set('seen', seen.slice(-1000));\nconst record = {...p, received_at: new Date().toISOString()};\nconst history = context.get('history') || [];\nhistory.unshift(record); context.set('history', history.slice(0,100));\nreturn [{payload: p.height_cm, topic: 'Altura estimada'},\n        {payload: history.slice(0,100)},\n        {payload: JSON.stringify(record)}];",
+    "outputs": 3,
+    "x": 340,
+    "y": 100,
+    "wires": [
+      [
+        "chart"
+      ],
+      [
+        "history"
+      ],
+      [
+        "file"
+      ]
+    ]
+  },
+  {
+    "id": "chart",
+    "type": "ui-chart",
+    "z": "flow",
+    "group": "group",
+    "name": "Alturas",
+    "label": "Altura estimada por recebimento (cm)",
+    "order": 2,
+    "chartType": "scatter",
+    "category": "topic",
+    "categoryType": "msg",
+    "xAxisLabel": "Recebimento no servidor",
+    "xAxisProperty": "",
+    "xAxisPropertyType": "timestamp",
+    "xAxisType": "time",
+    "xAxisFormat": "{HH}:{mm}:{ss}",
+    "yAxisLabel": "cm",
+    "yAxisProperty": "payload",
+    "yAxisPropertyType": "msg",
+    "ymin": "0",
+    "ymax": "250",
+    "action": "append",
+    "pointShape": "circle",
+    "pointRadius": 4,
+    "showLegend": false,
+    "removeOlder": "24",
+    "removeOlderUnit": "3600",
+    "removeOlderPoints": "100",
+    "width": "12",
+    "height": "5",
+    "x": 620,
+    "y": 60,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "history",
+    "type": "ui-template",
+    "z": "flow",
+    "group": "group",
+    "name": "Historico",
+    "order": 3,
+    "width": "12",
+    "height": "5",
+    "format": "<template>\n<div style=\"padding:12px;overflow:auto\">\n<p>Estimativa ultrassônica. Horários representam o recebimento no servidor.</p>\n<p v-if=\"!msg?.payload?.length\">Aguardando passagens medidas.</p>\n<table v-else style=\"width:100%;text-align:left\">\n<thead><tr><th>Recebido em (UTC)</th><th>Altura estimada</th></tr></thead>\n<tbody><tr v-for=\"row in msg.payload\" :key=\"row.event_id\">\n<td>{{ row.received_at }}</td><td>{{ row.height_cm.toFixed(1) }} cm</td>\n</tr></tbody></table>\n</div>\n</template>",
+    "storeOutMessages": true,
+    "passthru": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 620,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "file",
+    "type": "file",
+    "z": "flow",
+    "name": "Historico persistente JSONL",
+    "filename": "/home/haas/.node-red/data/alturas.jsonl",
+    "filenameType": "str",
+    "appendNewline": true,
+    "createDir": true,
+    "overwriteFile": "false",
+    "encoding": "utf8",
+    "x": 640,
+    "y": 180,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "status",
+    "type": "mqtt in",
+    "z": "flow",
+    "name": "Estado MQTT",
+    "topic": "porta/porta-01/status",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "broker",
+    "x": 100,
+    "y": 260,
+    "wires": [
+      [
+        "status-text"
+      ]
+    ]
+  },
+  {
+    "id": "status-text",
+    "type": "ui-text",
+    "z": "flow",
+    "group": "group",
+    "order": 1,
+    "width": "12",
+    "height": "1",
+    "name": "Conexao",
+    "label": "Conexão MQTT (não indica calibração)",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "x": 400,
+    "y": 260,
+    "wires": []
+  }
+]
