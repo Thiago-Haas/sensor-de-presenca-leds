@@ -7,6 +7,7 @@
 #else
 #include "sensor_config.example.h"
 #endif
+#include "model_infer.h"   // CNN de identificação por altura
 
 constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4;
 struct Event { char payload[256]; };
@@ -15,7 +16,7 @@ QueueHandle_t events, heartbeats;
 char eventTopic[96], statusTopic[96], heartbeatTopic[96], clientId[80];
 uint32_t bootId, sequence = 0;
 
-// Rede em tarefa separada: reconexao nao interrompe as medidas.
+// ── Tarefa de rede ───────────────────────────────────────────────
 void networkTask(void*) {
     WiFiClient transport;
     PubSubClient mqtt(transport);
@@ -62,14 +63,15 @@ void networkTask(void*) {
     }
 }
 
+// ── Setup ────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    pinMode(LED, OUTPUT); digitalWrite(LED, LOW);
+    pinMode(LED, OUTPUT);     digitalWrite(LED, LOW);
     pinMode(TRIGGER, OUTPUT); digitalWrite(TRIGGER, LOW);
     pinMode(ECHO, INPUT);
     bootId = esp_random();
-    snprintf(clientId, sizeof(clientId), "%s-%08lx", DEVICE_ID, (unsigned long)bootId);
-    snprintf(eventTopic, sizeof(eventTopic), "porta/%s/altura", DEVICE_ID);
+    snprintf(clientId,    sizeof(clientId),    "%s-%08lx", DEVICE_ID, (unsigned long)bootId);
+    snprintf(eventTopic,  sizeof(eventTopic),  "porta/%s/altura", DEVICE_ID);
     snprintf(statusTopic, sizeof(statusTopic), "porta/%s/status", DEVICE_ID);
     snprintf(heartbeatTopic, sizeof(heartbeatTopic), "porta/%s/heartbeat", DEVICE_ID);
     events = xQueueCreate(20, sizeof(Event));
@@ -83,12 +85,14 @@ void setup() {
         Serial.println("Configure SENSOR_HEIGHT_CM em include/sensor_config.h. Alturas desativadas.");
 }
 
+// ── Loop principal ───────────────────────────────────────────────
 void loop() {
     static uint32_t lastHeartbeat = millis() - 5000;
     static uint32_t lastRead = 0, lastSeen = 0, lastValid = 0, started = 0;
     static float window[3] = {}, peak = 0;
     static unsigned filled = 0, index = 0, clearSamples = 0, heightSamples = 0;
     static bool active = false, ledOn = false;
+
     uint32_t now = millis();
     // Gerado pela tarefa de medicao: travamento do loop interrompe o sinal de vida.
     if (now - lastHeartbeat >= 5000) {
@@ -101,15 +105,16 @@ void loop() {
     }
     if (now - lastRead < 70) return;
     lastRead = now;
-    digitalWrite(TRIGGER, LOW); delayMicroseconds(2);
+
+    digitalWrite(TRIGGER, LOW);  delayMicroseconds(2);
     digitalWrite(TRIGGER, HIGH); delayMicroseconds(10);
     digitalWrite(TRIGGER, LOW);
-    const unsigned long pulse = pulseIn(ECHO, HIGH, 30000);
-    const float distance = pulse / 58.0f;
+    const unsigned long pulse    = pulseIn(ECHO, HIGH, 30000);
+    const float         distance = pulse / 58.0f;
     now = millis();
+
     if (!pulse || distance < 2 || distance > 400) {
         filled = index = clearSamples = 0;
-        // Falta de eco nao prova que a pessoa saiu: descarta, nao inventa altura.
         if (active && now - lastValid > 2000) {
             active = false; peak = 0; heightSamples = 0;
             Serial.println("Passagem descartada: perda de eco.");
@@ -118,39 +123,62 @@ void loop() {
     }
     lastValid = now;
     Serial.printf("Distancia: %.1f cm\n", distance);
+
     const bool calibrated = SENSOR_HEIGHT_CM > MIN_HEIGHT_CM && SENSOR_HEIGHT_CM <= 400;
     if (!calibrated) {
-        // Preserva a deteccao simples enquanto a altura nao foi configurada.
-        if (distance <= 80) {
-            lastSeen = now; ledOn = true; digitalWrite(LED, HIGH);
-        }
+        if (distance <= 80) { lastSeen = now; ledOn = true; digitalWrite(LED, HIGH); }
         return;
     }
+
     window[index] = distance; index = (index + 1) % 3;
     if (filled < 3) ++filled;
     if (filled < 3) return;
+
+    // Mediana de 3 amostras
     float a = window[0], b = window[1], c = window[2];
     if (a > b) { float t = a; a = b; b = t; }
     if (b > c) { float t = b; b = c; c = t; }
     if (a > b) { float t = a; a = b; b = t; }
+
     const float height = SENSOR_HEIGHT_CM - b;
+
     if (height >= MIN_HEIGHT_CM) {
         lastSeen = now; ledOn = true; digitalWrite(LED, HIGH);
         if (!active) { active = true; peak = 0; heightSamples = 0; started = now; }
         if (height > peak) peak = height;
         ++heightSamples; clearSamples = 0;
+
     } else if (active) {
-        // Exige quatro leituras proximas ao piso para encerrar a passagem.
         if (fabsf(b - SENSOR_HEIGHT_CM) <= 15) ++clearSamples;
         else clearSamples = 0;
+
         if (clearSamples >= 4) {
             if (heightSamples >= 3) {
+
+                // ── Identificação pela CNN ────────────────────────
+                int         person_idx  = predict_person(peak);
+                const char* person_name = (person_idx >= 0)
+                                          ? LABELS[person_idx]
+                                          : "desconhecido";
+                Serial.printf("Pessoa: %s (pico %.1f cm)\n", person_name, peak);
+                // ─────────────────────────────────────────────────
+
                 Event event{};
                 snprintf(event.payload, sizeof(event.payload),
-                    "{\"event_id\":\"%08lx-%lu\",\"height_cm\":%.1f,\"sensor_height_cm\":%.1f,"
-                    "\"uptime_ms\":%lu,\"duration_ms\":%lu,\"estimated\":true}",
-                    (unsigned long)bootId, (unsigned long)++sequence, peak, SENSOR_HEIGHT_CM,
-                    (unsigned long)now, (unsigned long)(now - started));
+                    "{\"event_id\":\"%08lx-%lu\","
+                    "\"height_cm\":%.1f,"
+                    "\"person\":\"%s\","
+                    "\"sensor_height_cm\":%.1f,"
+                    "\"uptime_ms\":%lu,"
+                    "\"duration_ms\":%lu,"
+                    "\"estimated\":true}",
+                    (unsigned long)bootId, (unsigned long)++sequence,
+                    peak,
+                    person_name,
+                    SENSOR_HEIGHT_CM,
+                    (unsigned long)now,
+                    (unsigned long)(now - started));
+
                 Serial.println(event.payload);
                 if (xQueueSend(events, &event, 0) != pdTRUE)
                     Serial.println("Fila MQTT cheia: registro descartado.");
