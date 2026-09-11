@@ -2,43 +2,33 @@
 #include <math.h>
 #include "model.h"
 
-// ── Funções auxiliares ───────────────────────────────────────────
-static void relu(float* v, int n) {
-    for (int i = 0; i < n; i++) if (v[i] < 0) v[i] = 0;
-}
-
-static int argmax(float* v, int n) {
-    int best = 0;
-    for (int i = 1; i < n; i++) if (v[i] > v[best]) best = i;
-    return best;
-}
-
-// Multiplicação matriz-vetor: out[o] = Σ in[i]*W[i*out_n+o] + B[o]
-static void dense(const float* in, int in_n,
-                  const float* W,  const float* B, int out_n,
-                  float* out) {
-    for (int o = 0; o < out_n; o++) {
-        out[o] = B[o];
-        for (int i = 0; i < in_n; i++)
-            out[o] += in[i] * W[i * out_n + o];
-    }
-}
-
-// ── Inferência ───────────────────────────────────────────────────
-// Retorna índice da pessoa (0-7) ou -1 se confiança < min_confidence
+// Vizinho mais próximo com margem de confiança.
+// Retorna índice da pessoa (0-7) ou -1 se:
+//   - distância ao mais próximo > MATCH_MARGIN, ou
+//   - dois candidatos estão dentro da margem (ambíguo)
 int predict_person(float height_cm, float min_confidence = 0.70f) {
-    float x = (height_cm - MODEL_MEAN) / MODEL_STD;
-    float h1[32], h2[16], out[8];               // ← tamanhos atualizados
+    (void)min_confidence;  // não usado nessa abordagem
 
-    dense(&x, 1,  NN_W0, NN_B0, 32, h1); relu(h1, 32);  // Dense(32, relu)
-    dense(h1, 32, NN_W1, NN_B1, 16, h2); relu(h2, 16);  // Dense(16, relu)
-    dense(h2, 16, NN_W2, NN_B2, 8,  out);                // Dense(8,  softmax)
+    int   best_idx  = -1;
+    float best_dist = 9999.0f;
+    int   second_idx  = -1;
+    float second_dist = 9999.0f;
 
-    // Softmax
-    float sum = 0;
-    for (int i = 0; i < 8; i++) { out[i] = expf(out[i]); sum += out[i]; }
-    for (int i = 0; i < 8; i++) out[i] /= sum;
+    for (int i = 0; i < NUM_PESSOAS; i++) {
+        float dist = fabsf(height_cm - ALTURAS[i]);
+        if (dist < best_dist) {
+            second_dist = best_dist; second_idx = best_idx;
+            best_dist   = dist;      best_idx   = i;
+        } else if (dist < second_dist) {
+            second_dist = dist; second_idx = i;
+        }
+    }
 
-    int best = argmax(out, 8);
-    return (out[best] >= min_confidence) ? best : -1;
+    // Fora da margem → desconhecido
+    if (best_dist > MATCH_MARGIN) return -1;
+
+    // Dois candidatos dentro da margem → ambíguo → desconhecido
+    if (second_dist <= MATCH_MARGIN) return -1;
+
+    return best_idx;
 }

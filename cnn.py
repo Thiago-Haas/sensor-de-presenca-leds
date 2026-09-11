@@ -1,6 +1,8 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
 
 # ── Banco de alturas do lab ──────────────────────────────────────
 pessoas = {
@@ -16,58 +18,28 @@ pessoas = {
 nomes   = list(pessoas.keys())
 alturas = list(pessoas.values())
 
-# ── Gera amostras com ruído reduzido ────────────────────────────
-np.random.seed(42)
-X, y = [], []
-for i, h in enumerate(alturas):
-    samples = np.random.normal(h, 0.5, 500)   # ← ruído ±0.5 cm, 500 amostras
-    X.extend(samples)
-    y.extend([i] * 500)
+# ── Calcula margem segura entre vizinhos ─────────────────────────
+alturas_ord = sorted(zip(alturas, nomes))
+print("\nAlturas ordenadas:")
+for h, n in alturas_ord:
+    print(f"  {n}: {h} cm")
 
-X = np.array(X, dtype=np.float32).reshape(-1, 1, 1)
-y = np.array(y, dtype=np.int32)
+print("\nDiferenças entre vizinhos:")
+for i in range(1, len(alturas_ord)):
+    diff = alturas_ord[i][0] - alturas_ord[i-1][0]
+    print(f"  {alturas_ord[i-1][1]} → {alturas_ord[i][1]}: {diff:.1f} cm")
 
-# ── Normalização ─────────────────────────────────────────────────
-X_mean, X_std = X.mean(), X.std()
-X_norm = (X - X_mean) / X_std
-
-# ── Modelo maior para separar alturas próximas ───────────────────
-model = keras.Sequential([
-    keras.layers.Input(shape=(1, 1)),
-    keras.layers.Dense(32, activation='relu'),   # ← era 16
-    keras.layers.Flatten(),
-    keras.layers.Dense(16, activation='relu'),   # ← era 8
-    keras.layers.Dense(len(nomes), activation='softmax'),
-])
-model.compile(optimizer='adam',
-              loss='sparse_categorical_crossentropy',
-              metrics=['accuracy'])
-model.fit(X_norm, y, epochs=300, batch_size=32,  # ← era 100 épocas
-          validation_split=0.2, verbose=0)
-
-loss, acc = model.evaluate(X_norm, y, verbose=0)
-print(f"Acurácia final: {acc*100:.1f}%")
-
-# ── Exporta pesos com nomes sem conflito com macros do Arduino ───
-def fmt_array(name, arr):
-    flat = arr.flatten().tolist()
-    vals = ", ".join(f"{v:.6f}f" for v in flat)
-    return f"const float {name}[] = {{{vals}}};\n"
+# ── Exporta como lookup table com margem de ±1.5 cm ─────────────
+MARGEM = 1.5   # sensor HC-SR04 tem ~±2 cm; margem conservadora
 
 with open("include/model.h", "w") as f:
     f.write("#pragma once\n\n")
-    f.write(f"constexpr float MODEL_MEAN = {X_mean:.4f}f;\n")
-    f.write(f"constexpr float MODEL_STD  = {X_std:.4f}f;\n\n")
-    f.write('const char* LABELS[] = {' +
-            ', '.join(f'"{n}"' for n in nomes) + '};\n\n')
+    f.write(f"constexpr float MATCH_MARGIN = {MARGEM:.1f}f;\n")
+    f.write(f"constexpr int   NUM_PESSOAS  = {len(nomes)};\n\n")
+    f.write("const char* LABELS[] = {" +
+            ", ".join(f'"{n}"' for n in nomes) + "};\n\n")
+    f.write("const float ALTURAS[] = {" +
+            ", ".join(f"{h:.1f}f" for h in alturas) + "};\n")
 
-    layer_idx = 0
-    for layer in model.layers:
-        weights = layer.get_weights()
-        if len(weights) == 2:
-            f.write(fmt_array(f"NN_W{layer_idx}", weights[0]))
-            f.write(fmt_array(f"NN_B{layer_idx}", weights[1]))
-            f.write("\n")
-            layer_idx += 1
-
-print(f"Exportados {layer_idx} layers → include/model.h")
+print(f"\nExportado → include/model.h  (margem ±{MARGEM} cm, sem CNN)")
+print("Abordagem: vizinho mais próximo com margem de confiança")
