@@ -3,12 +3,7 @@
 #include <PubSubClient.h>
 #include <Preferences.h>
 #include "calibration.h"
-#include "wifi_env.h"
-#if __has_include("sensor_config.h")
-#include "sensor_config.h"
-#else
-#include "sensor_config.example.h"
-#endif
+#include "env_config.h"    // Gerado a partir do .env: Wi-Fi, MQTT e calibracao
 #include "model_infer.h"   // Identificacao por altura (vizinho mais proximo)
 
 constexpr uint8_t LED = 18, ECHO = 2, TRIGGER = 4, CALIBRATE_BUTTON = 19;
@@ -114,7 +109,7 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Firmware: heartbeat + calibracao D19 + identificacao por altura + diagnostico de rede.");
     if (!WIFI_SSID[0]) Serial.println("[WiFi] Falta WIFI_SSID no .env.");
-    if (!MQTT_HOST[0]) Serial.println("[MQTT] Falta MQTT_HOST em sensor_config.h.");
+    if (!MQTT_HOST[0]) Serial.println("[MQTT] Falta MQTT_HOST no .env.");
     pinMode(LED, OUTPUT);     digitalWrite(LED, LOW);
     pinMode(TRIGGER, OUTPUT); digitalWrite(TRIGGER, LOW);
     pinMode(ECHO, INPUT);
@@ -144,7 +139,7 @@ void setup() {
     }
     Serial.println("Sensor D2/D4; LED D18. Altura requer sensor no alto, voltado ao chao.");
     if (sensorHeightCm <= MIN_HEIGHT_CM || sensorHeightCm > 400)
-        Serial.println("Configure SENSOR_HEIGHT_CM em include/sensor_config.h. Alturas desativadas.");
+        Serial.println("Configure SENSOR_HEIGHT_CM no .env. Alturas desativadas.");
 }
 
 // ── Loop principal ───────────────────────────────────────────────

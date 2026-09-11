@@ -4,6 +4,31 @@ Projeto PlatformIO para ESP32 DOIT DevKit V1, Arduino, HC-SR04 e MQTT.
 LED D18, Echo D2 e Trigger D4. Registra uma **estimativa de altura** por passagem,
 sem contagem de pessoas nem identificação do sentido de deslocamento.
 
+## Getting started (resumo rápido)
+
+1. Clone o repositório e abra a pasta no VS Code com a extensão PlatformIO IDE.
+2. Copie `.env.example` para `.env` e preencha pelo menos `WIFI_SSID`,
+   `WIFI_PASSWORD` e `MQTT_HOST` — o IP do computador que vai rodar o broker,
+   **na mesma rede da ESP32** (descubra com `ip a` ou `ifconfig` no Linux/macOS,
+   `ipconfig` no Windows; nunca use `localhost`). Os demais parâmetros têm
+   valores padrão razoáveis; veja "Configuração local" para o significado de
+   cada um.
+3. Compile e grave o firmware: **Build** → **Upload** → **Monitor** no
+   PlatformIO, ou `pio run --target upload` no terminal.
+4. Instale o broker MQTT e o Node-RED e importe `dashboard/flows-local.json`
+   (veja "Tutorial rápido: Node-RED e dashboard" abaixo).
+5. Nesta máquina, libere a porta 1883 para a rede local com
+   `sudo bash dashboard/habilitar-mqtt-lan.sh`.
+6. Abra <http://localhost:1880/dashboard/alturas> e passe sob o sensor: o
+   registro aparece quando o sensor volta a detectar o chão.
+
+**Rede via hotspot de celular?** Confira se o hotspot não isola os
+dispositivos conectados entre si (alguns aparelhos chamam isso de "isolamento
+de AP" ou "AP isolation") — com isolamento ativado, a ESP32 conecta ao Wi-Fi
+mas nunca alcança o broker no computador. O restante deste README detalha
+cada etapa, ligações elétricas, calibração pelo botão D19 e solução de
+problemas.
+
 ## Instalação para medir altura
 
 Monte o sensor acima da porta, horizontal, com os transdutores apontados para o
@@ -19,18 +44,29 @@ podem gerar um único registro. O sensor não distingue pessoas de outros objeto
 
 ## Configuração local
 
-Copie `include/sensor_config.example.h` para `include/sensor_config.h` e configure:
+Todos os parâmetros vêm de um único arquivo `.env` na raiz do projeto
+(ignorado pelo Git). Copie `.env.example` para `.env` e preencha:
 
-- `SENSOR_HEIGHT_CM`: distância real ao chão, inicialmente **216 cm**, editável; zero desativa alturas.
-- Wi-Fi: preencha `WIFI_SSID` e `WIFI_PASSWORD` no arquivo `.env` na raiz.
-  Use `.env.example` como modelo; `.env` é ignorado pelo Git.
-- `MQTT_HOST`: IP do computador com o broker, nunca `localhost` na ESP32.
+- `WIFI_SSID` / `WIFI_PASSWORD`: rede Wi-Fi que a ESP32 deve usar.
+- `MQTT_HOST`: IP do computador com o broker, na mesma rede da ESP32; nunca `localhost`.
 - `MQTT_PORT`, `MQTT_USER` e `MQTT_PASSWORD`: configuração do broker.
 - `DEVICE_ID`: identificador único com letras, números e hífen; padrão `porta-01`.
+- `SENSOR_HEIGHT_CM`: distância real ao chão, inicialmente **216 cm**, editável; zero desativa alturas.
 - `MIN_HEIGHT_CM`: limite inferior de detecção, inicialmente 50 cm.
+- `LED_HOLD_MS`: por quanto tempo o LED continua aceso após a última presença, inicialmente 2000 ms.
 
-`sensor_config.h` é ignorado pelo Git. Sem ele, compila com altura de 216 cm e broker não configurado. Com altura zero,
-o LED mantém o comportamento simples de detectar até 80 cm.
+O PlatformIO lê o `.env` antes de compilar (`scripts/load_env.py`) e gera
+`env_config.h` dentro de `.pio/` (também ignorado pelo Git), sem interpretar
+comandos, variáveis nem escapes dentro dos valores. Sem `.env`, o firmware
+compila com os valores padrão acima — Wi-Fi e broker vazios, portanto sem
+conectar a nada. Depois de alterar o `.env`, recompile e grave novamente; os
+valores são incorporados ao firmware, mas não são adicionados aos arquivos
+versionados. Com altura zero, o LED mantém o comportamento simples de
+detectar até 80 cm.
+
+Os arquivos `include/sensor_config.h` / `sensor_config.example.h` de versões
+anteriores não são mais lidos pelo firmware; use somente o `.env` a partir de
+agora.
 
 ## Ligações
 
@@ -204,13 +240,11 @@ Substitua `SEU_USUARIO` pelo login do GitHub. A publicação requer autenticaç�
 - [FlowFuse Dashboard](https://dashboard.flowfuse.com/getting-started)
 - [Node-RED com Docker](https://nodered.org/docs/getting-started/docker)
 
-## Wi-Fi em .env
+## Wi-Fi e demais parâmetros em .env
 
-O PlatformIO lê `.env` antes de compilar e gera um cabeçalho em `.pio/`,
-também ignorado pelo Git. Sem `.env`, SSID e senha ficam vazios.
-Valores podem usar aspas simples ou duplas; são literais, sem interpolação.
-Depois de alterar o Wi-Fi, compile e grave novamente. As credenciais são
-incorporadas ao firmware, mas não são adicionadas aos arquivos versionados.
+Valores no `.env` podem usar aspas simples ou duplas; são literais, sem
+interpolação. Veja a seção "Configuração local" acima para a lista completa
+de chaves aceitas e como elas viram `env_config.h` em tempo de build.
 
 ## Check de vida
 

@@ -1,5 +1,8 @@
 #pragma once
-// Copie para sensor_config.h (ignorado pelo Git). Nao publique senhas.
+// OBSOLETO: os parametros de MQTT e calibracao agora vem do .env na raiz do
+// projeto (gerados em env_config.h por scripts/load_env.py). Este arquivo nao
+// e mais incluido por src/main.cpp; mantido apenas como referencia dos nomes
+// e tipos originais. Veja a secao "Configuracao local" do README.
 constexpr char MQTT_HOST[] = ""; // IP do computador na rede, nao localhost
 constexpr unsigned short MQTT_PORT = 1883;
 constexpr char MQTT_USER[] = "";
